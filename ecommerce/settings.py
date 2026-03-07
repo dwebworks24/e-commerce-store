@@ -28,13 +28,15 @@ SECRET_KEY = 'django-insecure-d-!4^40z0zcl9de%t-*k)1a@4yeh2==q#62)#_y504d#(dvc19
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
-    "https://gowrisankaragencies.com",  
+    "http://localhost:5173",
+    "https://dwebworks-store.lovable.app",
+
 ]
 
 
@@ -51,9 +53,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
     'corsheaders',
     'simple_history',
     'rest_framework',
+    'drf_yasg',
     'store',
 ]
 
@@ -167,6 +171,10 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.openapi.AutoSchema',
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+
 }
 
 SIMPLE_JWT = {
