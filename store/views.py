@@ -7,7 +7,10 @@ from django.db.models import Q
 from .models import Category, Product, Order, Coupon, Wishlist
 from .serializers import *
 
-
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
+from django.contrib.auth.hashers import check_password
 
 # ══════════════════════════════════════════════════════
 # AUTH VIEWS
@@ -23,6 +26,113 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
         return Response(UserProfileSerializer(user).data, status=status.HTTP_201_CREATED)
+
+class LoginView(generics.GenericAPIView):
+    serializer_class = UserLoginSerializer
+
+    def post(self, request, *args, **kwargs):
+
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        # Validate input
+        if not email or not password:
+            return Response(
+                {
+                    "error": "validation_error",
+                    "message": "Email and password are required"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check user
+        try:
+            user = Users.objects.get(email=email.lower())
+
+        except Users.DoesNotExist:
+            return Response(
+                {
+                    "error": "invalid_credentials",
+                    "message": "Invalid email or password"
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # Check active
+        if not user.is_active:
+            return Response(
+                {
+                    "error": "account_deactivated",
+                    "message": "Your account has been deactivated. Please contact support."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check password
+        if not check_password(password, user.password):
+            return Response(
+                {
+                    "error": "invalid_credentials",
+                    "message": "Invalid email or password"
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # Generate Tokens
+        refresh = RefreshToken.for_user(user)
+
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+
+        return Response(
+            {
+                "message": "Login successful",
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "username": user.username
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class RefreshTokenView(APIView):
+
+    def post(self, request):
+
+        refresh_token = request.data.get("refresh_token")
+
+        if not refresh_token:
+            return Response(
+                {
+                    "error": "validation_error",
+                    "message": "Refresh token required"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            refresh = RefreshToken(refresh_token)
+
+            return Response(
+                {
+                    "access_token": str(refresh.access_token)
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except TokenError:
+            return Response(
+                {
+                    "error": "invalid_token",
+                    "message": "Invalid or expired refresh token"
+                },
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
 
 class ProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer

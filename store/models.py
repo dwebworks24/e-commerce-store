@@ -9,7 +9,7 @@ import uuid
 # User Manager
 class UserManager(BaseUserManager):
     # use_in_migrations = True
-    def create_user(self, email, username, phone, password=None):
+    def create_user(self, email, username, phone, password=None, **extra_fields):
         if not email:
             raise ValueError("Email is required")
         if not username:
