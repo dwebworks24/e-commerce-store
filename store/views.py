@@ -166,6 +166,7 @@ class LogoutView(APIView):
 # PUBLIC VIEWS
 # ══════════════════════════════════════════════════════
 
+
 class CategoryListView(generics.ListAPIView):
     queryset = Category.objects.filter(status="active")
     serializer_class = CategorySerializer
