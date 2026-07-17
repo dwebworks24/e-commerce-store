@@ -20,7 +20,8 @@ class UserManager(BaseUserManager):
         user = self.model(
             email=self.normalize_email(email),
             username=username,
-            phone=phone
+            phone=phone,
+            **extra_fields
         )
 
         user.set_password(password)
@@ -211,7 +212,9 @@ class Product(models.Model):
 
 class ProductImage(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
-    image = models.ImageField(upload_to="products/")
+    color = models.ForeignKey(Color, on_delete=models.SET_NULL, null=True, blank=True, related_name="images")
+    size = models.CharField(max_length=20, blank=True, null=True)
+    image = models.TextField()
     alt_text = models.CharField(max_length=200, blank=True, default="")
     order = models.PositiveIntegerField(default=0)
 

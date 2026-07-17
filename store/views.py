@@ -148,10 +148,10 @@ class ChangePasswordView(APIView):
         serializer = ChangePasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = request.user
-        if not Users.check_password(serializer.validated_data["old_password"]):
+        if not user.check_password(serializer.validated_data["old_password"]):
             return Response({"old_password": "Incorrect password."}, status=400)
-        Users.set_password(serializer.validated_data["new_password"])
-        Users.save()
+        user.set_password(serializer.validated_data["new_password"])
+        user.save()
         return Response({"detail": "Password changed successfully."})
 
 class LogoutView(APIView):
@@ -171,6 +171,7 @@ class CategoryListView(generics.ListAPIView):
     queryset = Category.objects.filter(status="active")
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = None
 
 class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
@@ -219,6 +220,7 @@ class OrderCreateView(generics.CreateAPIView):
 class OrderListView(generics.ListAPIView):
     serializer_class = OrderSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         return Order.objects.filter(user=self.request.user)
@@ -235,22 +237,69 @@ class CouponValidateView(APIView):
 
     def post(self, request):
         code = request.data.get("code", "")
+        subtotal_val = request.data.get("subtotal")
+        
         try:
             coupon = Coupon.objects.get(code__iexact=code)
-            if coupon.is_valid:
-                return Response({
-                    "valid": True,
-                    "discount_type": coupon.type,
-                    "discount_value": str(coupon.value),
-                    "message": f"Coupon applied! {'{}% off'.format(coupon.value) if coupon.type == 'percentage' else '₹{} off'.format(coupon.value)}",
-                })
-            return Response({"valid": False, "message": "Coupon has expired or reached max uses."})
+            
+            # 1. Check status
+            if coupon.status != "active":
+                return Response({"valid": False, "message": "This coupon code is inactive."})
+                
+            # 2. Check dates
+            from django.utils import timezone
+            now = timezone.now()
+            if now < coupon.start_date:
+                return Response({"valid": False, "message": "This coupon code is not active yet."})
+            if now > coupon.end_date:
+                return Response({"valid": False, "message": "This coupon code has expired."})
+                
+            # 3. Check total uses
+            if coupon.max_uses > 0 and coupon.used_count >= coupon.max_uses:
+                return Response({"valid": False, "message": "This coupon has reached its maximum usage limit."})
+                
+            # 4. Check min order requirement
+            if subtotal_val is not None:
+                try:
+                    subtotal_num = float(subtotal_val)
+                    if subtotal_num < float(coupon.min_order):
+                        return Response({
+                            "valid": False,
+                            "message": f"This coupon requires a minimum purchase of ₹{coupon.min_order}."
+                        })
+                except (ValueError, TypeError):
+                    pass
+                    
+            # 5. Check WELCOME20 user-specific limits
+            if code.upper() == "WELCOME20":
+                if not request.user or not request.user.is_authenticated:
+                    return Response({
+                        "valid": False,
+                        "message": "Please log in to apply this coupon."
+                    })
+                # Check if this user has already used WELCOME20
+                used = Order.objects.filter(user=request.user, coupon_code__iexact="WELCOME20").exists()
+                if used:
+                    return Response({
+                        "valid": False,
+                        "message": "The WELCOME20 coupon can only be used once per customer."
+                    })
+                    
+            # Coupon is valid!
+            return Response({
+                "valid": True,
+                "discount_type": coupon.type,
+                "discount_value": str(coupon.value),
+                "message": f"Coupon applied! {'{}% off'.format(coupon.value) if coupon.type == 'percentage' else '₹{} off'.format(coupon.value)}",
+            })
+            
         except Coupon.DoesNotExist:
             return Response({"valid": False, "message": "Invalid coupon code."})
 
 class WishlistView(generics.ListAPIView):
     serializer_class = WishlistSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
 
     def get_queryset(self):
         return Wishlist.objects.filter(user=self.request.user)
@@ -276,12 +325,13 @@ class WishlistToggleView(APIView):
 
 class IsAdminUser(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user and request.Users.is_staff
+        return request.user and request.user.is_staff
 
 # ── Admin Categories ──
 class AdminCategoryListCreateView(generics.ListCreateAPIView):
     queryset = Category.objects.all()
     permission_classes = [IsAdminUser]
+    pagination_class = None
 
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -321,6 +371,7 @@ class AdminOrderListView(generics.ListAPIView):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
     permission_classes = [IsAdminUser]
+    pagination_class = None
 
 class AdminOrderDetailView(generics.RetrieveUpdateAPIView):
     queryset = Order.objects.all()
@@ -343,6 +394,7 @@ class AdminOrderDetailView(generics.RetrieveUpdateAPIView):
 class AdminCouponListCreateView(generics.ListCreateAPIView):
     queryset = Coupon.objects.all()
     permission_classes = [IsAdminUser]
+    pagination_class = None
 
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -357,3 +409,15 @@ class AdminCouponDetailView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method in ("PATCH", "PUT"):
             return CouponCreateSerializer
         return CouponSerializer
+
+# ── Admin Users ──
+class AdminUserListCreateView(generics.ListCreateAPIView):
+    queryset = Users.objects.all().order_by("-created_at")
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAdminUser]
+    pagination_class = None
+
+class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Users.objects.all()
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAdminUser]

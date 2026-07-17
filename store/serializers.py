@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db import models
 from .models import Users
 from .models import *
 
@@ -27,8 +28,20 @@ class UserLoginSerializer(serializers.Serializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Users
-        fields = ["id", "username", "email", "first_name", "last_name"]
+        fields = ["id", "username", "email", "first_name", "last_name", "phone", "address", "city", "state", "pincode"]
         read_only_fields = ["id", "username"]
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    role_name = serializers.CharField(source="role.role_name", read_only=True)
+
+    class Meta:
+        model = Users
+        fields = [
+            "id", "username", "email", "first_name", "last_name", 
+            "phone", "is_active", "is_staff", "is_superuser", 
+            "created_at", "role_name", "address", "city", "state", "pincode"
+        ]
+        read_only_fields = ["id", "username", "created_at"]
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField()
@@ -44,6 +57,7 @@ class SubCategorySerializer(serializers.ModelSerializer):
 class CategorySerializer(serializers.ModelSerializer):
     subcategories = SubCategorySerializer(many=True, read_only=True)
     product_count = serializers.SerializerMethodField()
+    image = serializers.SerializerMethodField()
 
     class Meta:
         model = Category
@@ -52,10 +66,65 @@ class CategorySerializer(serializers.ModelSerializer):
     def get_product_count(self, obj):
         return obj.products.count()
 
+    def get_image(self, obj):
+        if not obj.image:
+            return None
+        val = obj.image.name or obj.image.url
+        if val.startswith("http://") or val.startswith("https://"):
+            return val
+        request = self.context.get("request")
+        return request.build_absolute_uri(obj.image.url) if request else obj.image.url
+
 class CategoryCreateSerializer(serializers.ModelSerializer):
+    image = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    subcategories = serializers.JSONField(required=False, default=list)
+
     class Meta:
         model = Category
-        fields = ["name", "slug", "description", "status", "image"]
+        fields = ["name", "slug", "description", "status", "image", "subcategories"]
+
+    def create(self, validated_data):
+        subcategories_data = validated_data.pop("subcategories", [])
+        image_val = validated_data.pop("image", None)
+        category = Category.objects.create(**validated_data)
+        if image_val:
+            category.image = image_val
+            category.save()
+            
+        for sub_item in subcategories_data:
+            if isinstance(sub_item, dict):
+                name = sub_item.get("name")
+                slug = sub_item.get("slug") or slugify(name)
+            else:
+                name = sub_item
+                slug = slugify(name)
+            if name:
+                SubCategory.objects.get_or_create(category=category, name=name, defaults={"slug": slug})
+                
+        return category
+
+    def update(self, instance, validated_data):
+        subcategories_data = validated_data.pop("subcategories", [])
+        image_val = validated_data.pop("image", None)
+        category = super().update(instance, validated_data)
+        if image_val is not None:
+            category.image = image_val
+            category.save()
+            
+        current_subs = []
+        for sub_item in subcategories_data:
+            if isinstance(sub_item, dict):
+                name = sub_item.get("name")
+                slug = sub_item.get("slug") or slugify(name)
+            else:
+                name = sub_item
+                slug = slugify(name)
+            if name:
+                sub_obj, _ = SubCategory.objects.get_or_create(category=category, name=name, defaults={"slug": slug})
+                current_subs.append(sub_obj.id)
+                
+        SubCategory.objects.filter(category=category).exclude(id__in=current_subs).delete()
+        return category
 
 # ── Products ─────────────────────────────────────────
 
@@ -70,9 +139,32 @@ class FabricSerializer(serializers.ModelSerializer):
         fields = ["id", "name"]
 
 class ProductImageSerializer(serializers.ModelSerializer):
+    image = serializers.SerializerMethodField()
+    color = serializers.CharField(source="color.name", read_only=True, allow_null=True)
+
     class Meta:
         model = ProductImage
-        fields = ["id", "image", "alt_text"]
+        fields = ["id", "image", "alt_text", "color", "size"]
+
+    def get_image(self, obj):
+        if not obj.image:
+            return None
+        
+        if isinstance(obj.image, str):
+            val = obj.image
+        else:
+            val = getattr(obj.image, "name", "") or str(obj.image)
+
+        if val.startswith("http://") or val.startswith("https://") or val.startswith("data:"):
+            return val
+            
+        request = self.context.get("request")
+        if not isinstance(obj.image, str) and hasattr(obj.image, "url"):
+            url = obj.image.url
+        else:
+            url = f"/media/{val}" if not val.startswith("/") else val
+            
+        return request.build_absolute_uri(url) if request else url
 
 class ProductSerializer(serializers.ModelSerializer):
     category = CategorySerializer(read_only=True)
@@ -94,8 +186,21 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_primary_image(self, obj):
         img = obj.images.first()
         if img:
+            if isinstance(img.image, str):
+                val = img.image
+            else:
+                val = getattr(img.image, "name", "") or str(img.image)
+
+            if val.startswith("http://") or val.startswith("https://") or val.startswith("data:"):
+                return val
+                
             request = self.context.get("request")
-            return request.build_absolute_uri(img.image.url) if request else img.image.url
+            if not isinstance(img.image, str) and hasattr(img.image, "url"):
+                url = img.image.url
+            else:
+                url = f"/media/{val}" if not val.startswith("/") else val
+                
+            return request.build_absolute_uri(url) if request else url
         return None
 
 class ProductCreateSerializer(serializers.ModelSerializer):
@@ -109,6 +214,102 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             "category", "subcategory", "sizes", "colors", "fabric",
             "sku", "stock", "status", "meta_title", "meta_description",
         ]
+
+    def to_internal_value(self, data):
+        data = data.copy()
+        
+        # 1. Resolve Category
+        cat_val = data.get("category")
+        if cat_val:
+            try:
+                cat = Category.objects.filter(models.Q(slug=cat_val) | models.Q(name__iexact=cat_val)).first()
+                if cat:
+                    data["category"] = cat.id
+            except Exception:
+                pass
+                
+        # 2. Resolve Subcategory
+        sub_val = data.get("subcategory")
+        if sub_val:
+            try:
+                sub = SubCategory.objects.filter(models.Q(slug=sub_val) | models.Q(name__iexact=sub_val)).first()
+                if sub:
+                    data["subcategory"] = sub.id
+                else:
+                    data["subcategory"] = None
+            except Exception:
+                pass
+        else:
+            data["subcategory"] = None
+
+        # 3. Resolve Fabric
+        fab_val = data.get("fabric")
+        if fab_val:
+            try:
+                fab, _ = Fabric.objects.get_or_create(name=fab_val)
+                data["fabric"] = fab.id
+            except Exception:
+                pass
+        else:
+            data["fabric"] = None
+
+        # 4. Resolve Colors
+        colors_val = data.get("colors")
+        if colors_val:
+            color_ids = []
+            for col_name in colors_val:
+                try:
+                    col, _ = Color.objects.get_or_create(name=col_name, defaults={"hex_code": "#cccccc"})
+                    color_ids.append(col.id)
+                except Exception:
+                    pass
+            data["colors"] = color_ids
+        else:
+            data["colors"] = []
+
+        return super().to_internal_value(data)
+
+    def create(self, validated_data):
+        images_data = self.initial_data.get("images", [])
+        print("CREATE INITIAL DATA IMAGES:", images_data)
+        product = super().create(validated_data)
+        
+        for idx, img_info in enumerate(images_data):
+            if isinstance(img_info, dict):
+                img_url = img_info.get("image")
+                col_name = img_info.get("color")
+                size_val = img_info.get("size")
+            else:
+                img_url = img_info
+                col_name = None
+                size_val = None
+                
+            if img_url:
+                col = Color.objects.filter(name__iexact=col_name).first() if col_name else None
+                ProductImage.objects.create(product=product, image=img_url, color=col, size=size_val, order=idx)
+                
+        return product
+
+    def update(self, instance, validated_data):
+        if "images" in self.initial_data:
+            images_data = self.initial_data.get("images", [])
+            print("UPDATE INITIAL DATA IMAGES:", images_data)
+            ProductImage.objects.filter(product=instance).delete()
+            for idx, img_info in enumerate(images_data):
+                if isinstance(img_info, dict):
+                    img_url = img_info.get("image")
+                    col_name = img_info.get("color")
+                    size_val = img_info.get("size")
+                else:
+                    img_url = img_info
+                    col_name = None
+                    size_val = None
+                    
+                if img_url:
+                    col = Color.objects.filter(name__iexact=col_name).first() if col_name else None
+                    ProductImage.objects.create(product=instance, image=img_url, color=col, size=size_val, order=idx)
+                    
+        return super().update(instance, validated_data)
 
 # ── Orders ───────────────────────────────────────────
 
@@ -131,10 +332,10 @@ class OrderSerializer(serializers.ModelSerializer):
         ]
 
     def get_customer_name(self, obj):
-        return f"{obj.users.first_name} {obj.users.last_name}".strip() or obj.users.username
+        return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.username
 
     def get_customer_email(self, obj):
-        return obj.users.email
+        return obj.user.email
 
 class OrderItemCreateSerializer(serializers.Serializer):
     product_id = serializers.UUIDField()
@@ -148,15 +349,51 @@ class OrderCreateSerializer(serializers.Serializer):
     state = serializers.CharField()
     pincode = serializers.CharField()
     phone = serializers.CharField()
-    coupon_code = serializers.CharField(required=False, default="")
+    coupon_code = serializers.CharField(required=False, default="", allow_blank=True)
     items = OrderItemCreateSerializer(many=True)
+
+    def validate(self, data):
+        coupon_code = data.get("coupon_code")
+        if coupon_code:
+            try:
+                coupon = Coupon.objects.get(code__iexact=coupon_code)
+                if coupon.status != "active":
+                    raise serializers.ValidationError({"coupon_code": "This coupon code is inactive."})
+                
+                from django.utils import timezone
+                now = timezone.now()
+                if now < coupon.start_date:
+                    raise serializers.ValidationError({"coupon_code": "This coupon code is not active yet."})
+                if now > coupon.end_date:
+                    raise serializers.ValidationError({"coupon_code": "This coupon code has expired."})
+                    
+                if coupon.max_uses > 0 and coupon.used_count >= coupon.max_uses:
+                    raise serializers.ValidationError({"coupon_code": "This coupon has reached its maximum usage limit."})
+                
+                user = self.context["request"].user
+                if coupon_code.upper() == "WELCOME20":
+                    if not user or not user.is_authenticated:
+                        raise serializers.ValidationError({"coupon_code": "Please log in to apply this coupon."})
+                    used = Order.objects.filter(user=user, coupon_code__iexact="WELCOME20").exists()
+                    if used:
+                        raise serializers.ValidationError({"coupon_code": "The WELCOME20 coupon can only be used once per customer."})
+                        
+                subtotal = 0
+                for item in data.get("items", []):
+                    product = Product.objects.get(id=item["product_id"])
+                    subtotal += product.price * item["quantity"]
+                if subtotal < coupon.min_order:
+                    raise serializers.ValidationError({"coupon_code": f"This coupon requires a minimum purchase of ₹{coupon.min_order}."})
+            except Coupon.DoesNotExist:
+                raise serializers.ValidationError({"coupon_code": "Invalid coupon code."})
+        return data
 
     def create(self, validated_data):
         items_data = validated_data.pop("items")
-        user = self.context["request"].users
+        user = self.context["request"].user
         total = 0
 
-        order = Order.objects.create(users=Users, total=0, **validated_data)
+        order = Order.objects.create(user=user, total=0, **validated_data)
 
         for item_data in items_data:
             product = Product.objects.get(id=item_data["product_id"])
@@ -176,7 +413,7 @@ class OrderCreateSerializer(serializers.Serializer):
         coupon_code = validated_data.get("coupon_code")
         if coupon_code:
             try:
-                coupon = Coupon.objects.get(code=coupon_code)
+                coupon = Coupon.objects.get(code__iexact=coupon_code)
                 if coupon.is_valid:
                     if coupon.type == "percentage":
                         total -= total * (coupon.value / 100)

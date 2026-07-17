@@ -16,21 +16,23 @@ urlpatterns = [
     # ── Public ──
     path("categories/", views.CategoryListView.as_view(), name="categories"),
     path("products/", views.ProductListView.as_view(), name="products"),
-    path("products//", views.ProductDetailView.as_view(), name="product_detail"),
-    path("products//toggle_wishlist/", views.WishlistToggleView.as_view(), name="toggle_wishlist"),
+    path("products/<uuid:pk>/", views.ProductDetailView.as_view(), name="product_detail"),
+    path("products/<uuid:product_id>/toggle_wishlist/", views.WishlistToggleView.as_view(), name="toggle_wishlist"),
     path("orders/", views.OrderCreateView.as_view(), name="order_create"),  # POST
     path("orders/list/", views.OrderListView.as_view(), name="order_list"),  # GET user orders
-    path("orders//", views.OrderDetailView.as_view(), name="order_detail"),
+    path("orders/<uuid:pk>/", views.OrderDetailView.as_view(), name="order_detail"),
     path("coupons/validate/", views.CouponValidateView.as_view(), name="coupon_validate"),
     path("wishlist/", views.WishlistView.as_view(), name="wishlist"),
 
     # ── Admin ──
     path("admin/categories/", views.AdminCategoryListCreateView.as_view(), name="admin_categories"),
-    path("admin/categories//", views.AdminCategoryDetailView.as_view(), name="admin_category_detail"),
+    path("admin/categories/<int:pk>/", views.AdminCategoryDetailView.as_view(), name="admin_category_detail"),
     path("admin/products/", views.AdminProductListCreateView.as_view(), name="admin_products"),
-    path("admin/products//", views.AdminProductDetailView.as_view(), name="admin_product_detail"),
+    path("admin/products/<uuid:pk>/", views.AdminProductDetailView.as_view(), name="admin_product_detail"),
     path("admin/orders/", views.AdminOrderListView.as_view(), name="admin_orders"),
-    path("admin/orders//", views.AdminOrderDetailView.as_view(), name="admin_order_detail"),
+    path("admin/orders/<uuid:pk>/", views.AdminOrderDetailView.as_view(), name="admin_order_detail"),
     path("admin/coupons/", views.AdminCouponListCreateView.as_view(), name="admin_coupons"),
-    path("admin/coupons//", views.AdminCouponDetailView.as_view(), name="admin_coupon_detail"),
+    path("admin/coupons/<uuid:pk>/", views.AdminCouponDetailView.as_view(), name="admin_coupon_detail"),
+    path("admin/users/", views.AdminUserListCreateView.as_view(), name="admin_users"),
+    path("admin/users/<int:pk>/", views.AdminUserDetailView.as_view(), name="admin_user_detail"),
 ]
