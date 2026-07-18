@@ -24,6 +24,8 @@ urlpatterns = [
     path("orders/<uuid:pk>/", views.OrderDetailView.as_view(), name="order_detail"),
     path("coupons/validate/", views.CouponValidateView.as_view(), name="coupon_validate"),
     path("wishlist/", views.WishlistView.as_view(), name="wishlist"),
+    path("notifications/", views.NotificationListView.as_view(), name="notification_list"),
+    path("notifications/<str:pk>/mark-read/", views.NotificationMarkReadView.as_view(), name="notification_mark_read"),
 
     # ── Admin ──
     path("admin/categories/", views.AdminCategoryListCreateView.as_view(), name="admin_categories"),

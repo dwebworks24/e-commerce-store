@@ -265,10 +265,30 @@ class Order(models.Model):
         return self.order_number
 
     def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        old_status = None
+        old_payment_status = None
+
         if not self.order_number:
             import random, string
             self.order_number = "ORD-" + "".join(random.choices(string.digits, k=8))
+
+        if not is_new:
+            try:
+                orig = Order.objects.get(pk=self.pk)
+                old_status = orig.status
+                old_payment_status = orig.payment_status
+            except Order.DoesNotExist:
+                pass
+
         super().save(*args, **kwargs)
+
+        if not is_new:
+            try:
+                from .utils import send_order_status_email
+                send_order_status_email(self, is_new=False, old_status=old_status, old_payment_status=old_payment_status)
+            except Exception as e:
+                print(f"Error sending status update email: {e}")
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
@@ -318,3 +338,16 @@ class Wishlist(models.Model):
 
     def __str__(self):
         return f"{self.user.username} → {self.product.name}"
+
+class Notification(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.email} - {self.title}"

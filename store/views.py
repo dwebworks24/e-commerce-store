@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from store.models import Users
 from django.db.models import Q
-from .models import Category, Product, Order, Coupon, Wishlist
+from .models import Category, Product, Order, Coupon, Wishlist, Notification
 from .serializers import *
 
 from rest_framework.views import APIView
@@ -488,3 +488,27 @@ class VerifyPaymentView(APIView):
             order.payment_status = "failed"
             order.save()
             return Response({"error": "Payment signature verification failed", "status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+
+class NotificationListView(generics.ListAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+
+class NotificationMarkReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk=None):
+        if pk == "all":
+            Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+            return Response({"status": "success", "message": "All notifications marked as read"})
+        
+        try:
+            notification = Notification.objects.get(pk=pk, user=request.user)
+            notification.is_read = True
+            notification.save()
+            return Response({"status": "success", "message": "Notification marked as read"})
+        except Notification.DoesNotExist:
+            return Response({"error": "Notification not found"}, status=status.HTTP_404_NOT_FOUND)

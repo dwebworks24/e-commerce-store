@@ -429,6 +429,14 @@ class OrderCreateSerializer(serializers.Serializer):
 
         order.total = total
         order.save()
+
+        if payment_method == "cod":
+            try:
+                from .utils import send_order_status_email
+                send_order_status_email(order, is_new=True, old_status=None, old_payment_status=None)
+            except Exception as e:
+                print(f"Error sending COD email: {e}")
+
         return order
 
 class OrderStatusUpdateSerializer(serializers.Serializer):
@@ -460,3 +468,8 @@ class WishlistSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wishlist
         fields = ["id", "product", "created_at"]
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ["id", "title", "message", "is_read", "created_at"]
