@@ -20,6 +20,7 @@ urlpatterns = [
     path("products/<uuid:product_id>/toggle_wishlist/", views.WishlistToggleView.as_view(), name="toggle_wishlist"),
     path("orders/", views.OrderCreateView.as_view(), name="order_create"),  # POST
     path("orders/list/", views.OrderListView.as_view(), name="order_list"),  # GET user orders
+    path("orders/verify-payment/", views.VerifyPaymentView.as_view(), name="order_verify_payment"),
     path("orders/<uuid:pk>/", views.OrderDetailView.as_view(), name="order_detail"),
     path("coupons/validate/", views.CouponValidateView.as_view(), name="coupon_validate"),
     path("wishlist/", views.WishlistView.as_view(), name="wishlist"),

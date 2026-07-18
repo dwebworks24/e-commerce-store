@@ -214,7 +214,35 @@ class OrderCreateView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
+        
+        payment_method = request.data.get("payment_method", "cod")
         order = serializer.save()
+
+        if payment_method != "cod":
+            import razorpay
+            from django.conf import settings
+            try:
+                client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+                razorpay_amount = int(order.total * 100)
+                razorpay_order = client.order.create({
+                    "amount": razorpay_amount,
+                    "currency": "INR",
+                    "receipt": str(order.order_number),
+                    "payment_capture": 1
+                })
+                order.razorpay_order_id = razorpay_order["id"]
+                order.save()
+
+                return Response({
+                    "order": OrderSerializer(order).data,
+                    "razorpay_order_id": order.razorpay_order_id,
+                    "razorpay_key_id": settings.RAZORPAY_KEY_ID,
+                    "amount": razorpay_amount,
+                    "currency": "INR",
+                }, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                print(f"Razorpay Order creation failed: {e}")
+                
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 class OrderListView(generics.ListAPIView):
@@ -421,3 +449,42 @@ class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Users.objects.all()
     serializer_class = AdminUserSerializer
     permission_classes = [IsAdminUser]
+
+class VerifyPaymentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        razorpay_order_id = request.data.get("razorpay_order_id")
+        razorpay_payment_id = request.data.get("razorpay_payment_id")
+        razorpay_signature = request.data.get("razorpay_signature")
+
+        if not razorpay_order_id or not razorpay_payment_id or not razorpay_signature:
+            return Response({"error": "Missing payment verification parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = Order.objects.get(razorpay_order_id=razorpay_order_id, user=request.user)
+        except Order.DoesNotExist:
+            return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        import razorpay
+        from django.conf import settings
+        
+        try:
+            client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+            params_dict = {
+                'razorpay_order_id': razorpay_order_id,
+                'razorpay_payment_id': razorpay_payment_id,
+                'razorpay_signature': razorpay_signature
+            }
+            client.utility.verify_payment_signature(params_dict)
+            
+            order.payment_status = "paid"
+            order.status = "confirmed"
+            order.razorpay_payment_id = razorpay_payment_id
+            order.save()
+            return Response({"message": "Payment verified successfully", "status": "success"})
+        except Exception as e:
+            print(f"Payment verification failed: {e}")
+            order.payment_status = "failed"
+            order.save()
+            return Response({"error": "Payment signature verification failed", "status": "failed"}, status=status.HTTP_400_BAD_REQUEST)

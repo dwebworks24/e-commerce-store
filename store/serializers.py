@@ -350,6 +350,7 @@ class OrderCreateSerializer(serializers.Serializer):
     pincode = serializers.CharField()
     phone = serializers.CharField()
     coupon_code = serializers.CharField(required=False, default="", allow_blank=True)
+    payment_method = serializers.CharField(required=False, default="cod")
     items = OrderItemCreateSerializer(many=True)
 
     def validate(self, data):
@@ -390,6 +391,7 @@ class OrderCreateSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         items_data = validated_data.pop("items")
+        payment_method = validated_data.pop("payment_method", "cod")
         user = self.context["request"].user
         total = 0
 
