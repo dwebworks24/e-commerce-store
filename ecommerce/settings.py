@@ -35,6 +35,7 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    "http://localhost:8082",
     "https://dwebworks-store.lovable.app",
 
 ]
