@@ -25,35 +25,51 @@ class RegisterView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        return Response(UserProfileSerializer(user).data, status=status.HTTP_201_CREATED)
+
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+
+        return Response(
+            {
+                "message": "Registration successful",
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "user": UserProfileSerializer(user).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 class LoginView(generics.GenericAPIView):
     serializer_class = UserLoginSerializer
+    permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
-
-        email = request.data.get("email")
+        raw_id = request.data.get("email") or request.data.get("username") or request.data.get("login")
         password = request.data.get("password")
 
+        identifier = str(raw_id).strip() if raw_id else ""
+
         # Validate input
-        if not email or not password:
+        if not identifier or not password:
             return Response(
                 {
                     "error": "validation_error",
-                    "message": "Email and password are required"
+                    "message": "Email/Username and password are required"
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check user
-        try:
-            user = Users.objects.get(email=email.lower())
+        # Check user by email, username, or phone
+        user = Users.objects.filter(
+            Q(email__iexact=identifier) | Q(username__iexact=identifier) | Q(phone=identifier)
+        ).first()
 
-        except Users.DoesNotExist:
+        if not user:
             return Response(
                 {
                     "error": "invalid_credentials",
-                    "message": "Invalid email or password"
+                    "message": "Invalid email/username or password"
                 },
                 status=status.HTTP_401_UNAUTHORIZED
             )
@@ -73,7 +89,7 @@ class LoginView(generics.GenericAPIView):
             return Response(
                 {
                     "error": "invalid_credentials",
-                    "message": "Invalid email or password"
+                    "message": "Invalid email/username or password"
                 },
                 status=status.HTTP_401_UNAUTHORIZED
             )
@@ -89,11 +105,7 @@ class LoginView(generics.GenericAPIView):
                 "message": "Login successful",
                 "access_token": access_token,
                 "refresh_token": refresh_token,
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "username": user.username
-                }
+                "user": UserProfileSerializer(user).data,
             },
             status=status.HTTP_200_OK
         )
@@ -353,7 +365,13 @@ class WishlistToggleView(APIView):
 
 class IsAdminUser(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user and request.user.is_staff
+        return bool(
+            request.user and (
+                request.user.is_staff or 
+                request.user.is_superuser or 
+                (hasattr(request.user, "role") and request.user.role and request.user.role.role_category in ["admin", "staff"])
+            )
+        )
 
 # ── Admin Categories ──
 class AdminCategoryListCreateView(generics.ListCreateAPIView):

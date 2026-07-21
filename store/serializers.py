@@ -5,31 +5,93 @@ from .models import *
 
 # ── Auth ──────────────────────────────────────────────
 
+# ── Auth ──────────────────────────────────────────────
+
 class RegisterSerializer(serializers.ModelSerializer):
     confirm_password = serializers.CharField(write_only=True)
+    username = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    first_name = serializers.CharField(required=False, allow_blank=True, default="")
+    last_name = serializers.CharField(required=False, allow_blank=True, default="")
 
     class Meta:
         model = Users
-        fields = ["username", "email", "first_name",'phone',"last_name","password", "confirm_password"]
+        fields = ["username", "email", "first_name", "phone", "last_name", "password", "confirm_password"]
         extra_kwargs = {"password": {"write_only": True}}
 
     def validate(self, data):
-        if data["password"] != data.pop("confirm_password"):
+        confirm_password = data.pop("confirm_password", None)
+        if data.get("password") != confirm_password:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
+        # Sanitize email
+        email = data.get("email", "").strip().lower()
+        if not email:
+            raise serializers.ValidationError({"email": "Email address is required."})
+        if Users.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError({"email": "A user with this email address already exists."})
+        data["email"] = email
+
+        # Sanitize phone
+        phone = data.get("phone")
+        if phone:
+            phone_str = str(phone).strip()
+            if phone_str:
+                if Users.objects.filter(phone=phone_str).exists():
+                    raise serializers.ValidationError({"phone": "A user with this phone number already exists."})
+                data["phone"] = phone_str
+            else:
+                data["phone"] = None
+        else:
+            data["phone"] = None
+
+        # Sanitize username or fallback
+        username = data.get("username", "")
+        if username:
+            username_str = str(username).strip()
+            if Users.objects.filter(username__iexact=username_str).exists():
+                raise serializers.ValidationError({"username": "A user with this username already exists."})
+            data["username"] = username_str
+        else:
+            base_username = email.split("@")[0]
+            candidate = base_username
+            counter = 1
+            while Users.objects.filter(username__iexact=candidate).exists():
+                candidate = f"{base_username}{counter}"
+                counter += 1
+            data["username"] = candidate
+
         return data
 
     def create(self, validated_data):
         return Users.objects.create_user(**validated_data)
 
+
 class UserLoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    email = serializers.CharField(required=False, allow_blank=True)
+    username = serializers.CharField(required=False, allow_blank=True)
+    login = serializers.CharField(required=False, allow_blank=True)
     password = serializers.CharField(write_only=True)
-    
+
+
 class UserProfileSerializer(serializers.ModelSerializer):
+    role_name = serializers.SerializerMethodField()
+
     class Meta:
         model = Users
-        fields = ["id", "username", "email", "first_name", "last_name", "phone", "address", "city", "state", "pincode"]
-        read_only_fields = ["id", "username"]
+        fields = [
+            "id", "username", "email", "first_name", "last_name", 
+            "phone", "address", "city", "state", "pincode",
+            "is_active", "is_staff", "is_superuser", "role_name"
+        ]
+        read_only_fields = ["id", "username", "is_staff", "is_superuser"]
+
+    def get_role_name(self, obj):
+        if obj.role:
+            return obj.role.role_name
+        if obj.is_superuser or obj.is_staff:
+            return "admin"
+        return "customer"
 
 class AdminUserSerializer(serializers.ModelSerializer):
     role_name = serializers.CharField(source="role.role_name", read_only=True)

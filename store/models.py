@@ -8,32 +8,60 @@ import uuid
 
 # User Manager
 class UserManager(BaseUserManager):
-    # use_in_migrations = True
-    def create_user(self, email, username, phone, password=None, **extra_fields):
+    def create_user(self, email, username=None, phone=None, password=None, **extra_fields):
         if not email:
             raise ValueError("Email is required")
-        if not username:
-            raise ValueError("Username is required")
-        if not phone:
-            raise ValueError("Phone number is required")
+        
+        email = self.normalize_email(email).lower().strip()
+        
+        if not username or not str(username).strip():
+            username = email.split("@")[0]
+        else:
+            username = str(username).strip()
+
+        if phone:
+            phone = str(phone).strip()
+            if not phone:
+                phone = None
+        else:
+            phone = None
+
+        if "role" not in extra_fields or extra_fields["role"] is None:
+            try:
+                customer_role = Role.objects.filter(role_name__iexact="customer").first()
+                if customer_role:
+                    extra_fields["role"] = customer_role
+            except Exception:
+                pass
 
         user = self.model(
-            email=self.normalize_email(email),
+            email=email,
             username=username,
             phone=phone,
             **extra_fields
         )
 
-        user.set_password(password)
+        if password:
+            user.set_password(password)
+        else:
+            user.set_unusable_password()
+
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, username, phone, password=None):
-        user = self.create_user(email, username, phone, password)
-        user.is_active = True
-        user.is_superuser = True
-        user.is_staff = True
-        user.save(using=self._db)
+    def create_superuser(self, email, username=None, phone=None, password=None, **extra_fields):
+        extra_fields.setdefault("is_active", True)
+        extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("is_staff", True)
+
+        try:
+            admin_role = Role.objects.filter(role_name__iexact="admin").first()
+            if admin_role:
+                extra_fields["role"] = admin_role
+        except Exception:
+            pass
+
+        user = self.create_user(email, username, phone, password, **extra_fields)
         return user
 
 
