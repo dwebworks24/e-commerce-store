@@ -530,3 +530,28 @@ class NotificationMarkReadView(APIView):
             return Response({"status": "success", "message": "Notification marked as read"})
         except Notification.DoesNotExist:
             return Response({"error": "Notification not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class ProductReviewView(generics.ListCreateAPIView):
+    serializer_class = ReviewSerializer
+
+    def get_queryset(self):
+        return Review.objects.filter(product_id=self.kwargs["product_id"]).order_by("-created_at")
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
+
+    def perform_create(self, serializer):
+        product_id = self.kwargs["product_id"]
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"detail": "Product not found"})
+        
+        if Review.objects.filter(product=product, user=self.request.user).exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"detail": "You have already reviewed this product."})
+
+        serializer.save(user=self.request.user, product=product)

@@ -104,6 +104,7 @@ class Users(AbstractBaseUser, PermissionsMixin):
     district = models.CharField(blank=True, null=True, default=None)
     state = models.CharField(blank=True, null=True, default=None)
     pincode = models.IntegerField(blank=True, null=True, default=None)
+    expo_push_token = models.CharField(max_length=255, blank=True, null=True)
    
     otp = models.IntegerField(blank=True, null=True,default=None)
     role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True, related_name="users")
@@ -366,6 +367,43 @@ class Wishlist(models.Model):
 
     def __str__(self):
         return f"{self.user.username} → {self.product.name}"
+
+class Review(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="reviews")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews")
+    rating = models.IntegerField(default=5)
+    comment = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'reviews'
+        ordering = ['-created_at']
+        unique_together = ('product', 'user')
+
+    def __str__(self):
+        return f"Review by {self.user.username} on {self.product.name} ({self.rating} stars)"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.update_product_rating()
+
+    def delete(self, *args, **kwargs):
+        product = self.product
+        super().delete(*args, **kwargs)
+        self.update_product_rating(product)
+
+    def update_product_rating(self, product=None):
+        target_product = product or self.product
+        reviews = target_product.reviews.all()
+        count = reviews.count()
+        if count > 0:
+            avg_rating = sum([r.rating for r in reviews]) / count
+        else:
+            avg_rating = 0
+        target_product.rating = avg_rating
+        target_product.review_count = count
+        target_product.save()
 
 class Notification(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")

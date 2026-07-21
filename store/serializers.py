@@ -82,6 +82,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             "id", "username", "email", "first_name", "last_name", 
             "phone", "address", "city", "state", "pincode",
+            "expo_push_token",
             "is_active", "is_staff", "is_superuser", "role_name"
         ]
         read_only_fields = ["id", "username", "is_staff", "is_superuser"]
@@ -535,3 +536,14 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ["id", "title", "message", "is_read", "created_at"]
+
+class ReviewSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Review
+        fields = ["id", "product", "user", "user_name", "rating", "comment", "created_at"]
+        read_only_fields = ["id", "user", "product"]
+
+    def get_user_name(self, obj):
+        return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.username

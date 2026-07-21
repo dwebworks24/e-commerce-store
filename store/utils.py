@@ -187,3 +187,39 @@ def send_order_status_email(order, is_new, old_status, old_payment_status):
     text_content = strip_tags(html_content)
     
     send_order_email_thread(subject, text_content, html_content, to_email)
+
+def send_expo_push_notification(token, title, body, data=None):
+    if not token:
+        return None
+    
+    import requests
+    import json
+
+    payload = {
+        'to': token,
+        'title': title,
+        'body': body,
+        'sound': 'default',
+    }
+    if data:
+        payload['data'] = data
+
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+    }
+
+    try:
+        response = requests.post(
+            'https://exp.host/--/api/v2/push/send',
+            data=json.dumps(payload),
+            headers=headers
+        )
+        response.raise_for_status()
+        res_json = response.json()
+        print(f"Expo Push Notification sent. Response: {res_json}")
+        return res_json
+    except Exception as e:
+        print(f"Failed to send Expo Push Notification: {e}")
+        return None

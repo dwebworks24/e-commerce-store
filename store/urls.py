@@ -18,6 +18,7 @@ urlpatterns = [
     path("products/", views.ProductListView.as_view(), name="products"),
     path("products/<uuid:pk>/", views.ProductDetailView.as_view(), name="product_detail"),
     path("products/<uuid:product_id>/toggle_wishlist/", views.WishlistToggleView.as_view(), name="toggle_wishlist"),
+    path("products/<uuid:product_id>/reviews/", views.ProductReviewView.as_view(), name="product_reviews"),
     path("orders/", views.OrderCreateView.as_view(), name="order_create"),  # POST
     path("orders/list/", views.OrderListView.as_view(), name="order_list"),  # GET user orders
     path("orders/verify-payment/", views.VerifyPaymentView.as_view(), name="order_verify_payment"),
