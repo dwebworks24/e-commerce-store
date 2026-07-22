@@ -244,6 +244,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "category", "subcategory", "colors", "sizes", "fabric", "rating", "review_count",
             "description", "short_description", "is_new", "is_featured", "in_stock",
             "stock", "sku", "status", "meta_title", "meta_description", "created_at",
+            "discount_percent", "discount_amount", "hsn_code",
         ]
 
     def get_primary_image(self, obj):
@@ -276,6 +277,7 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             "name", "price", "original_price", "description", "short_description",
             "category", "subcategory", "sizes", "colors", "fabric",
             "sku", "stock", "status", "meta_title", "meta_description",
+            "discount_percent", "discount_amount", "hsn_code",
         ]
 
     def to_internal_value(self, data):

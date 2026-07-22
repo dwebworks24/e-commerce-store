@@ -220,6 +220,9 @@ class Product(models.Model):
     status = models.CharField(max_length=20, choices=[("active", "Active"), ("draft", "Draft"), ("archived", "Archived")], default="active")
     meta_title = models.CharField(max_length=200, blank=True, default="")
     meta_description = models.TextField(blank=True, default="")
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    hsn_code = models.CharField(max_length=20, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -232,6 +235,22 @@ class Product(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = slugify(self.name)
+            
+        # Apply discount logic
+        if self.discount_percent is not None or self.discount_amount is not None:
+            base_price = self.price
+            self.original_price = base_price
+            
+            discounted = base_price
+            if self.discount_percent is not None:
+                discounted -= (discounted * (self.discount_percent / 100))
+            if self.discount_amount is not None:
+                discounted -= self.discount_amount
+            self.price = max(0, discounted)
+        else:
+            if self.original_price == self.price:
+                self.original_price = None
+                
         super().save(*args, **kwargs)
 
     @property
