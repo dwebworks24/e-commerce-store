@@ -308,6 +308,10 @@ class Order(models.Model):
     pincode = models.CharField(max_length=10)
     phone = models.CharField(max_length=15)
     tracking_number = models.CharField(max_length=100, blank=True, default="")
+    shipping_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    delivery_type = models.CharField(max_length=50, default="standard")  # standard | express | free
+    courier_name = models.CharField(max_length=100, blank=True, default="Standard Courier")
+    estimated_delivery_days = models.CharField(max_length=50, blank=True, default="3-5 Business Days")
     coupon_code = models.CharField(max_length=50, blank=True, default="")
     razorpay_order_id = models.CharField(max_length=100, blank=True, default="")
     razorpay_payment_id = models.CharField(max_length=100, blank=True, default="")
@@ -444,3 +448,78 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.user.email} - {self.title}"
+
+
+class ShippingConfig(models.Model):
+    CARRIER_CHOICES = [
+        ("one_delhivery", "one.delhivery Logistics Platform"),
+        ("dtdc", "DTDC Express Courier"),
+        ("shiprocket", "Shiprocket Aggregator API"),
+        ("manual", "Custom Rule Engine"),
+    ]
+
+    free_shipping_threshold = models.DecimalField(max_digits=10, decimal_places=2, default=1999)
+    standard_flat_rate = models.DecimalField(max_digits=10, decimal_places=2, default=99)
+    express_flat_rate = models.DecimalField(max_digits=10, decimal_places=2, default=199)
+    primary_courier = models.CharField(max_length=50, choices=CARRIER_CHOICES, default="one_delhivery")
+    shiprocket_enabled = models.BooleanField(default=False)
+    shiprocket_email = models.CharField(max_length=200, blank=True, default="")
+    shiprocket_password = models.CharField(max_length=200, blank=True, default="")
+    dtdc_api_key = models.CharField(max_length=200, blank=True, default="")
+    dtdc_customer_code = models.CharField(max_length=100, blank=True, default="")
+    delhivery_api_key = models.CharField(max_length=200, blank=True, default="")
+    delhivery_client_name = models.CharField(max_length=100, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Shipping Configuration"
+
+    def __str__(self):
+        return f"Shipping Config (Free Above: ₹{self.free_shipping_threshold})"
+
+
+class PincodeRate(models.Model):
+    ZONE_CHOICES = [
+        ("metro", "Metro / Tier 1"),
+        ("regional", "Regional State"),
+        ("national", "National"),
+        ("remote", "Remote / Special"),
+    ]
+
+    pincode = models.CharField(max_length=10, unique=True)
+    state = models.CharField(max_length=100, blank=True, default="")
+    city = models.CharField(max_length=100, blank=True, default="")
+    zone = models.CharField(max_length=50, choices=ZONE_CHOICES, default="national")
+    standard_rate = models.DecimalField(max_digits=8, decimal_places=2, default=99)
+    express_rate = models.DecimalField(max_digits=8, decimal_places=2, default=199)
+    estimated_days = models.CharField(max_length=50, default="3-5 Days")
+    is_serviceable = models.BooleanField(default=True)
+    cod_available = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.pincode} - {self.city}, {self.state} ({self.zone})"
+
+
+class PaymentConfig(models.Model):
+    MODE_CHOICES = [
+        ("test", "Test / Sandbox Mode"),
+        ("live", "Production / Live Mode"),
+    ]
+
+    razorpay_enabled = models.BooleanField(default=True)
+    razorpay_mode = models.CharField(max_length=20, choices=MODE_CHOICES, default="test")
+    razorpay_key_id = models.CharField(max_length=200, blank=True, default="")
+    razorpay_key_secret = models.CharField(max_length=200, blank=True, default="")
+    razorpay_webhook_secret = models.CharField(max_length=200, blank=True, default="")
+    cod_enabled = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Payment Gateway Configuration"
+
+    def __str__(self):
+        return f"Payment Config ({self.razorpay_mode.upper()} Mode)"
+
+

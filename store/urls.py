@@ -22,11 +22,15 @@ urlpatterns = [
     path("orders/", views.OrderCreateView.as_view(), name="order_create"),  # POST
     path("orders/list/", views.OrderListView.as_view(), name="order_list"),  # GET user orders
     path("orders/verify-payment/", views.VerifyPaymentView.as_view(), name="order_verify_payment"),
+    path("orders/razorpay-webhook/", views.RazorpayWebhookView.as_view(), name="razorpay_webhook"),
     path("orders/<uuid:pk>/", views.OrderDetailView.as_view(), name="order_detail"),
     path("coupons/validate/", views.CouponValidateView.as_view(), name="coupon_validate"),
+    path("shipping/check-pincode/", views.CheckPincodeView.as_view(), name="check_pincode"),
+    path("payment/config/", views.PublicPaymentConfigView.as_view(), name="public_payment_config"),
     path("wishlist/", views.WishlistView.as_view(), name="wishlist"),
     path("notifications/", views.NotificationListView.as_view(), name="notification_list"),
     path("notifications/<str:pk>/mark-read/", views.NotificationMarkReadView.as_view(), name="notification_mark_read"),
+    path("notifications/clear/", views.NotificationClearView.as_view(), name="notification_clear"),
 
     # ── Admin ──
     path("admin/categories/", views.AdminCategoryListCreateView.as_view(), name="admin_categories"),
@@ -39,4 +43,6 @@ urlpatterns = [
     path("admin/coupons/<uuid:pk>/", views.AdminCouponDetailView.as_view(), name="admin_coupon_detail"),
     path("admin/users/", views.AdminUserListCreateView.as_view(), name="admin_users"),
     path("admin/users/<int:pk>/", views.AdminUserDetailView.as_view(), name="admin_user_detail"),
+    path("admin/shipping-config/", views.AdminShippingConfigView.as_view(), name="admin_shipping_config"),
+    path("admin/payment-config/", views.AdminPaymentConfigView.as_view(), name="admin_payment_config"),
 ]

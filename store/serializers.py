@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from django.db import models
 from .models import Users
@@ -384,6 +385,40 @@ class OrderItemSerializer(serializers.ModelSerializer):
         model = OrderItem
         fields = ["id", "product_name", "quantity", "price", "size", "color"]
 
+class ShippingConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShippingConfig
+        fields = [
+            "id", "free_shipping_threshold", "standard_flat_rate", "express_flat_rate",
+            "primary_courier", "shiprocket_enabled", "shiprocket_email", "shiprocket_password",
+            "dtdc_api_key", "dtdc_customer_code", "delhivery_api_key", "delhivery_client_name", "updated_at",
+        ]
+        extra_kwargs = {
+            "shiprocket_password": {"write_only": True},
+            "dtdc_api_key": {"write_only": True},
+            "delhivery_api_key": {"write_only": True},
+        }
+
+class PaymentConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentConfig
+        fields = [
+            "id", "razorpay_enabled", "razorpay_mode", "razorpay_key_id",
+            "razorpay_key_secret", "razorpay_webhook_secret", "cod_enabled", "updated_at",
+        ]
+        extra_kwargs = {
+            "razorpay_key_secret": {"write_only": True},
+            "razorpay_webhook_secret": {"write_only": True},
+        }
+
+class PincodeRateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PincodeRate
+        fields = [
+            "id", "pincode", "state", "city", "zone", "standard_rate",
+            "express_rate", "estimated_days", "is_serviceable", "cod_available",
+        ]
+
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     customer_name = serializers.SerializerMethodField()
@@ -393,8 +428,9 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             "id", "order_number", "status", "payment_status", "total",
+            "shipping_fee", "delivery_type", "courier_name", "estimated_delivery_days",
             "created_at", "customer_name", "customer_email",
-            "shipping_address", "tracking_number", "items",
+            "shipping_address", "city", "state", "pincode", "phone", "tracking_number", "items",
         ]
 
     def get_customer_name(self, obj):
@@ -417,6 +453,8 @@ class OrderCreateSerializer(serializers.Serializer):
     phone = serializers.CharField()
     coupon_code = serializers.CharField(required=False, default="", allow_blank=True)
     payment_method = serializers.CharField(required=False, default="cod")
+    delivery_type = serializers.CharField(required=False, default="standard")
+    shipping_fee = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=0)
     items = OrderItemCreateSerializer(many=True)
 
     def validate(self, data):
@@ -458,15 +496,18 @@ class OrderCreateSerializer(serializers.Serializer):
     def create(self, validated_data):
         items_data = validated_data.pop("items")
         payment_method = validated_data.pop("payment_method", "cod")
-        user = self.context["request"].user
-        total = 0
+        delivery_type = validated_data.pop("delivery_type", "standard")
+        custom_shipping_fee = validated_data.pop("shipping_fee", None)
 
-        order = Order.objects.create(user=user, total=0, **validated_data)
+        user = self.context["request"].user
+        subtotal = 0
+
+        order = Order.objects.create(user=user, total=0, delivery_type=delivery_type, **validated_data)
 
         for item_data in items_data:
             product = Product.objects.get(id=item_data["product_id"])
             line_total = product.price * item_data["quantity"]
-            total += line_total
+            subtotal += line_total
             OrderItem.objects.create(
                 order=order,
                 product=product,
@@ -478,22 +519,35 @@ class OrderCreateSerializer(serializers.Serializer):
             )
 
         # Apply coupon if provided
+        discounted_subtotal = subtotal
         coupon_code = validated_data.get("coupon_code")
         if coupon_code:
             try:
                 coupon = Coupon.objects.get(code__iexact=coupon_code)
                 if coupon.is_valid:
                     if coupon.type == "percentage":
-                        total -= total * (coupon.value / 100)
+                        discounted_subtotal -= discounted_subtotal * (coupon.value / 100)
                     else:
-                        total -= coupon.value
-                    total = max(total, 0)
+                        discounted_subtotal -= coupon.value
+                    discounted_subtotal = max(discounted_subtotal, 0)
                     coupon.used_count += 1
                     coupon.save()
             except Coupon.DoesNotExist:
                 pass
 
-        order.total = total
+        # Calculate shipping dynamically
+        from .shipping_service import calculate_shipping
+        calc = calculate_shipping(order.pincode, float(subtotal), order.state, delivery_type)
+
+        if custom_shipping_fee is not None and float(custom_shipping_fee) > 0:
+            final_shipping = Decimal(str(custom_shipping_fee))
+        else:
+            final_shipping = Decimal(str(calc["final_shipping_fee"]))
+
+        order.shipping_fee = final_shipping
+        order.courier_name = calc["courier_name"]
+        order.estimated_delivery_days = calc["estimated_days"]
+        order.total = Decimal(str(discounted_subtotal)) + final_shipping
         order.save()
 
         if payment_method == "cod":

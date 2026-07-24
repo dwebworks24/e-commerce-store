@@ -237,9 +237,17 @@ class OrderCreateView(generics.CreateAPIView):
 
         if payment_method != "cod":
             import razorpay
-            from django.conf import settings
+            key_id, key_secret = get_razorpay_credentials()
+
+            if not key_id or not key_secret:
+                return Response({
+                    "error": "payment_gateway_unconfigured",
+                    "message": "Razorpay credentials are not configured in environment.",
+                    "order": OrderSerializer(order).data,
+                }, status=status.HTTP_400_BAD_REQUEST)
+
             try:
-                client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+                client = razorpay.Client(auth=(key_id, key_secret))
                 razorpay_amount = int(order.total * 100)
                 razorpay_order = client.order.create({
                     "amount": razorpay_amount,
@@ -253,13 +261,18 @@ class OrderCreateView(generics.CreateAPIView):
                 return Response({
                     "order": OrderSerializer(order).data,
                     "razorpay_order_id": order.razorpay_order_id,
-                    "razorpay_key_id": settings.RAZORPAY_KEY_ID,
+                    "razorpay_key_id": key_id,
                     "amount": razorpay_amount,
                     "currency": "INR",
                 }, status=status.HTTP_201_CREATED)
             except Exception as e:
                 print(f"Razorpay Order creation failed: {e}")
-                
+                return Response({
+                    "error": "razorpay_creation_failed",
+                    "message": f"Payment Gateway Error: {str(e)}",
+                    "order": OrderSerializer(order).data,
+                }, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 class OrderListView(generics.ListAPIView):
@@ -512,6 +525,50 @@ class VerifyPaymentView(APIView):
             order.save()
             return Response({"error": "Payment signature verification failed", "status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
 
+class RazorpayWebhookView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        import razorpay
+        from django.conf import settings
+        
+        payload = request.body.decode('utf-8')
+        signature = request.headers.get('X-Razorpay-Signature', '')
+        webhook_secret = getattr(settings, 'RAZORPAY_WEBHOOK_SECRET', '')
+
+        # Verify signature if webhook secret is configured
+        if webhook_secret:
+            try:
+                client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+                client.utility.verify_webhook_signature(payload, signature, webhook_secret)
+            except Exception as e:
+                print(f"Webhook signature verification failed: {e}")
+                return Response({"status": "invalid_signature"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            event_data = request.data
+            event_type = event_data.get("event")
+            
+            if event_type in ["order.paid", "payment.captured"]:
+                payload_entity = event_data.get("payload", {}).get("payment", {}).get("entity", {}) or event_data.get("payload", {}).get("order", {}).get("entity", {})
+                rzp_order_id = payload_entity.get("order_id") or payload_entity.get("id")
+                rzp_payment_id = payload_entity.get("id")
+
+                if rzp_order_id:
+                    order = Order.objects.filter(razorpay_order_id=rzp_order_id).first()
+                    if order:
+                        order.payment_status = "paid"
+                        order.status = "confirmed"
+                        if rzp_payment_id:
+                            order.razorpay_payment_id = rzp_payment_id
+                        order.save()
+                        print(f"Razorpay webhook automatically updated order {order.order_number} to paid.")
+                        
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"Razorpay webhook error: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 class NotificationListView(generics.ListAPIView):
     serializer_class = NotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -560,3 +617,290 @@ class ProductReviewView(generics.ListCreateAPIView):
             raise ValidationError({"detail": "You have already reviewed this product."})
 
         serializer.save(user=self.request.user, product=product)
+
+class CheckPincodeView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        pincode = request.query_params.get("pincode", "").strip()
+        amount_str = request.query_params.get("amount", "0")
+        state = request.query_params.get("state", "").strip()
+        delivery_type = request.query_params.get("delivery_type", "standard").strip()
+
+        if not pincode:
+            return Response({"error": "Pincode parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            amount = float(amount_str)
+        except ValueError:
+            amount = 0.0
+    permission_classes = [IsAdminUser]
+
+    def get_serializer_class(self):
+        if self.request.method in ("PATCH", "PUT"):
+            return OrderStatusUpdateSerializer
+        return OrderSerializer
+
+    def update(self, request, *args, **kwargs):
+        order = self.get_object()
+        serializer = OrderStatusUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order.status = serializer.validated_data["status"]
+        order.save()
+        return Response(OrderSerializer(order).data)
+
+# ── Admin Coupons ──
+class AdminCouponListCreateView(generics.ListCreateAPIView):
+    queryset = Coupon.objects.all()
+    permission_classes = [IsAdminUser]
+    pagination_class = None
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return CouponCreateSerializer
+        return CouponSerializer
+
+class AdminCouponDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Coupon.objects.all()
+    permission_classes = [IsAdminUser]
+
+    def get_serializer_class(self):
+        if self.request.method in ("PATCH", "PUT"):
+            return CouponCreateSerializer
+        return CouponSerializer
+
+# ── Admin Users ──
+class AdminUserListCreateView(generics.ListCreateAPIView):
+    queryset = Users.objects.all().order_by("-created_at")
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAdminUser]
+    pagination_class = None
+
+class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Users.objects.all()
+    serializer_class = AdminUserSerializer
+    permission_classes = [IsAdminUser]
+
+class VerifyPaymentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        razorpay_order_id = request.data.get("razorpay_order_id")
+        razorpay_payment_id = request.data.get("razorpay_payment_id")
+        razorpay_signature = request.data.get("razorpay_signature")
+
+        if not razorpay_order_id or not razorpay_payment_id or not razorpay_signature:
+            return Response({"error": "Missing payment verification parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order = Order.objects.get(razorpay_order_id=razorpay_order_id, user=request.user)
+        except Order.DoesNotExist:
+            return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        import razorpay
+        key_id, key_secret = get_razorpay_credentials()
+        
+        try:
+            client = razorpay.Client(auth=(key_id, key_secret))
+            params_dict = {
+                'razorpay_order_id': razorpay_order_id,
+                'razorpay_payment_id': razorpay_payment_id,
+                'razorpay_signature': razorpay_signature
+            }
+            client.utility.verify_payment_signature(params_dict)
+            
+            order.payment_status = "paid"
+            order.status = "confirmed"
+            order.razorpay_payment_id = razorpay_payment_id
+            order.save()
+            return Response({"message": "Payment verified successfully", "status": "success"})
+        except Exception as e:
+            print(f"Payment verification failed: {e}")
+            order.payment_status = "failed"
+            order.save()
+            return Response({"error": "Payment signature verification failed", "status": "failed"}, status=status.HTTP_400_BAD_REQUEST)
+
+class RazorpayWebhookView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        import razorpay
+        from django.conf import settings
+        
+        payload = request.body.decode('utf-8')
+        signature = request.headers.get('X-Razorpay-Signature', '')
+        webhook_secret = getattr(settings, 'RAZORPAY_WEBHOOK_SECRET', '')
+
+        # Verify signature if webhook secret is configured
+        if webhook_secret:
+            try:
+                client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+                client.utility.verify_webhook_signature(payload, signature, webhook_secret)
+            except Exception as e:
+                print(f"Webhook signature verification failed: {e}")
+                return Response({"status": "invalid_signature"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            event_data = request.data
+            event_type = event_data.get("event")
+            
+            if event_type in ["order.paid", "payment.captured"]:
+                payload_entity = event_data.get("payload", {}).get("payment", {}).get("entity", {}) or event_data.get("payload", {}).get("order", {}).get("entity", {})
+                rzp_order_id = payload_entity.get("order_id") or payload_entity.get("id")
+                rzp_payment_id = payload_entity.get("id")
+
+                if rzp_order_id:
+                    order = Order.objects.filter(razorpay_order_id=rzp_order_id).first()
+                    if order:
+                        order.payment_status = "paid"
+                        order.status = "confirmed"
+                        if rzp_payment_id:
+                            order.razorpay_payment_id = rzp_payment_id
+                        order.save()
+                        print(f"Razorpay webhook automatically updated order {order.order_number} to paid.")
+                        
+            return Response({"status": "success"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"Razorpay webhook error: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+class NotificationListView(generics.ListAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user).order_by("-created_at")
+
+class NotificationMarkReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk=None):
+        if pk == "all":
+            Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+            return Response({"status": "success", "message": "All notifications marked as read"})
+        
+        try:
+            notification = Notification.objects.get(pk=pk, user=request.user)
+            notification.is_read = True
+            notification.save()
+            return Response({"status": "success", "message": "Notification marked as read"})
+        except Notification.DoesNotExist:
+            return Response({"error": "Notification not found"}, status=status.HTTP_404_NOT_FOUND)
+
+class NotificationClearView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        Notification.objects.filter(user=request.user).delete()
+        return Response({"status": "success", "message": "All notifications cleared"})
+
+class ProductReviewView(generics.ListCreateAPIView):
+    serializer_class = ReviewSerializer
+
+    def get_queryset(self):
+        return Review.objects.filter(product_id=self.kwargs["product_id"]).order_by("-created_at")
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
+
+    def perform_create(self, serializer):
+        product_id = self.kwargs["product_id"]
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"detail": "Product not found"})
+        
+        if Review.objects.filter(product=product, user=self.request.user).exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"detail": "You have already reviewed this product."})
+
+        serializer.save(user=self.request.user, product=product)
+
+class CheckPincodeView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        pincode = request.query_params.get("pincode", "").strip()
+        amount_str = request.query_params.get("amount", "0")
+        state = request.query_params.get("state", "").strip()
+        delivery_type = request.query_params.get("delivery_type", "standard").strip()
+
+        if not pincode:
+            return Response({"error": "Pincode parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            amount = float(amount_str)
+        except ValueError:
+            amount = 0.0
+
+        from .shipping_service import calculate_shipping
+        res = calculate_shipping(pincode, amount, state, delivery_type)
+        return Response(res, status=status.HTTP_200_OK)
+
+class AdminShippingConfigView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        from .shipping_service import get_shipping_config
+        config = get_shipping_config()
+        return Response(ShippingConfigSerializer(config).data)
+
+    def post(self, request):
+        from .shipping_service import get_shipping_config
+        config = get_shipping_config()
+        serializer = ShippingConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(ShippingConfigSerializer(config).data)
+
+def get_payment_config():
+    config_obj, _ = PaymentConfig.objects.get_or_create(
+        id=1,
+        defaults={
+            "razorpay_enabled": True,
+            "razorpay_mode": "test",
+            "cod_enabled": True,
+        }
+    )
+    return config_obj
+
+def get_razorpay_credentials():
+    from django.conf import settings
+    config = get_payment_config()
+    if config.razorpay_key_id and config.razorpay_key_secret:
+        return config.razorpay_key_id.strip(), config.razorpay_key_secret.strip()
+    key_id = getattr(settings, "RAZORPAY_KEY_ID", "").strip()
+    key_secret = getattr(settings, "RAZORPAY_KEY_SECRET", "").strip()
+    return key_id, key_secret
+
+class AdminPaymentConfigView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        config = get_payment_config()
+        return Response(PaymentConfigSerializer(config).data)
+
+    def post(self, request):
+        config = get_payment_config()
+        serializer = PaymentConfigSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(PaymentConfigSerializer(config).data)
+
+class PublicPaymentConfigView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from django.conf import settings
+        config = get_payment_config()
+        env_key = getattr(settings, "RAZORPAY_KEY_ID", "").strip()
+        has_key = bool(config.razorpay_key_id.strip() or env_key)
+        return Response({
+            "razorpay_enabled": config.razorpay_enabled and has_key,
+            "razorpay_mode": config.razorpay_mode,
+            "cod_enabled": config.cod_enabled,
+        })
