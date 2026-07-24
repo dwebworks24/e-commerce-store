@@ -242,7 +242,7 @@ class ProductSerializer(serializers.ModelSerializer):
         fields = [
             "id", "name", "slug", "price", "original_price", "primary_image", "images",
             "category", "subcategory", "colors", "sizes", "fabric", "rating", "review_count",
-            "description", "short_description", "is_new", "is_featured", "in_stock",
+            "description", "short_description", "is_new", "is_featured", "tags", "in_stock",
             "stock", "sku", "status", "meta_title", "meta_description", "created_at",
             "discount_percent", "discount_amount", "hsn_code",
         ]
@@ -270,12 +270,13 @@ class ProductSerializer(serializers.ModelSerializer):
 class ProductCreateSerializer(serializers.ModelSerializer):
     colors = serializers.PrimaryKeyRelatedField(queryset=Color.objects.all(), many=True, required=False)
     fabric = serializers.PrimaryKeyRelatedField(queryset=Fabric.objects.all(), required=False, allow_null=True)
+    tags = serializers.JSONField(required=False, default=list)
 
     class Meta:
         model = Product
         fields = [
             "name", "price", "original_price", "description", "short_description",
-            "category", "subcategory", "sizes", "colors", "fabric",
+            "category", "subcategory", "sizes", "colors", "fabric", "tags",
             "sku", "stock", "status", "meta_title", "meta_description",
             "discount_percent", "discount_amount", "hsn_code",
         ]
@@ -284,8 +285,8 @@ class ProductCreateSerializer(serializers.ModelSerializer):
         data = data.copy()
         
         # 1. Resolve Category
-        cat_val = data.get("category")
-        if cat_val:
+        if "category" in data and data.get("category"):
+            cat_val = data.get("category")
             try:
                 cat = Category.objects.filter(models.Q(slug=cat_val) | models.Q(name__iexact=cat_val)).first()
                 if cat:
@@ -294,43 +295,43 @@ class ProductCreateSerializer(serializers.ModelSerializer):
                 pass
                 
         # 2. Resolve Subcategory
-        sub_val = data.get("subcategory")
-        if sub_val:
-            try:
-                sub = SubCategory.objects.filter(models.Q(slug=sub_val) | models.Q(name__iexact=sub_val)).first()
-                if sub:
-                    data["subcategory"] = sub.id
-                else:
+        if "subcategory" in data:
+            sub_val = data.get("subcategory")
+            if sub_val:
+                try:
+                    sub = SubCategory.objects.filter(models.Q(slug=sub_val) | models.Q(name__iexact=sub_val)).first()
+                    data["subcategory"] = sub.id if sub else None
+                except Exception:
                     data["subcategory"] = None
-            except Exception:
-                pass
-        else:
-            data["subcategory"] = None
+            else:
+                data["subcategory"] = None
 
         # 3. Resolve Fabric
-        fab_val = data.get("fabric")
-        if fab_val:
-            try:
-                fab, _ = Fabric.objects.get_or_create(name=fab_val)
-                data["fabric"] = fab.id
-            except Exception:
-                pass
-        else:
-            data["fabric"] = None
+        if "fabric" in data:
+            fab_val = data.get("fabric")
+            if fab_val:
+                try:
+                    fab, _ = Fabric.objects.get_or_create(name=fab_val)
+                    data["fabric"] = fab.id
+                except Exception:
+                    data["fabric"] = None
+            else:
+                data["fabric"] = None
 
         # 4. Resolve Colors
-        colors_val = data.get("colors")
-        if colors_val:
-            color_ids = []
-            for col_name in colors_val:
-                try:
-                    col, _ = Color.objects.get_or_create(name=col_name, defaults={"hex_code": "#cccccc"})
-                    color_ids.append(col.id)
-                except Exception:
-                    pass
-            data["colors"] = color_ids
-        else:
-            data["colors"] = []
+        if "colors" in data:
+            colors_val = data.get("colors")
+            if colors_val:
+                color_ids = []
+                for col_name in colors_val:
+                    try:
+                        col, _ = Color.objects.get_or_create(name=col_name, defaults={"hex_code": "#cccccc"})
+                        color_ids.append(col.id)
+                    except Exception:
+                        pass
+                data["colors"] = color_ids
+            else:
+                data["colors"] = []
 
         return super().to_internal_value(data)
 

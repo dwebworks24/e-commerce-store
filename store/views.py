@@ -209,6 +209,11 @@ class ProductListView(generics.ListAPIView):
             qs = qs.filter(is_featured=True)
         if params.get("is_new"):
             qs = qs.filter(is_new=True)
+        tags = params.get("tags") or params.get("tag")
+        if tags:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+            for t in tag_list:
+                qs = qs.filter(tags__icontains=t)
         if params.get("ordering"):
             qs = qs.order_by(params["ordering"])
 

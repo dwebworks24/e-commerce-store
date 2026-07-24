@@ -214,6 +214,7 @@ class Product(models.Model):
     review_count = models.PositiveIntegerField(default=0)
     is_new = models.BooleanField(default=False)
     is_featured = models.BooleanField(default=False)
+    tags = models.JSONField(default=list, blank=True)  # ["Best Selling", "Featured", "Best Deals", "New Arrivals"]
     in_stock = models.BooleanField(default=True)
     stock = models.PositiveIntegerField(default=0)
     sku = models.CharField(max_length=50, unique=True)
@@ -235,7 +236,14 @@ class Product(models.Model):
     def save(self, *args, **kwargs):
         if not self.slug:
             self.slug = slugify(self.name)
-            
+
+        if isinstance(self.tags, list):
+            lower_tags = [t.lower() for t in self.tags if isinstance(t, str)]
+            if "featured" in lower_tags or "featured products" in lower_tags:
+                self.is_featured = True
+            if "new" in lower_tags or "new arrivals" in lower_tags:
+                self.is_new = True
+
         # Apply discount logic
         if self.discount_percent is not None or self.discount_amount is not None:
             base_price = self.price
